@@ -5,7 +5,13 @@ Local MCP server that fills the gap in the hosted Gmail connector: it can't down
 ## Tools
 - `list_attachments(message_id)`: name, type, size
 - `download_attachment(message_id, filename, dest_dir="", index=0)`: saves to `~/Downloads/gmail-attachments` by default, never overwrites
-- `read_attachment_text(message_id, filename, index=0, max_chars=20000)`: text from PDF or text files
+- `read_attachment_text(message_id, filename, index=0, max_chars=20000)`: extracts text without saving the file. Supported types:
+  - PDF (text-based; scanned PDFs return a hint to download instead)
+  - Word `.docx` (paragraphs and tables)
+  - Excel `.xlsx` (every sheet, rows joined with ` | `)
+  - PowerPoint `.pptx` (text per slide)
+  - Plain text: `.txt`, `.csv`, `.json`, `.xml`, `.html`, `.md`
+  - Anything else (images, zip, legacy `.doc` / `.xls` / `.ppt`): use `download_attachment`, then open the file yourself.
 
 `message_id` is the same id the Gmail connector returns from `search_threads` / `get_message`.
 

@@ -15,6 +15,10 @@ DEFAULT_DEST = Path(
 )
 TEXT_TYPES = ("text/", "application/json", "application/xml", "application/csv")
 
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
 mcp = FastMCP("gmail-attachments")
 
 
@@ -56,6 +60,42 @@ def _bytes(svc, message_id: str, part: dict) -> bytes:
             .execute()["data"]
         )
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
+def _docx_text(raw: bytes) -> str:
+    from docx import Document
+
+    doc = Document(io.BytesIO(raw))
+    lines = [p.text for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            lines.append(" | ".join(c.text.strip() for c in row.cells))
+    return "\n".join(lines)
+
+
+def _xlsx_text(raw: bytes) -> str:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    out = []
+    for ws in wb.worksheets:
+        out.append(f"## Sheet: {ws.title}")
+        for row in ws.iter_rows(values_only=True):
+            if any(c is not None for c in row):
+                out.append(" | ".join("" if c is None else str(c) for c in row))
+    return "\n".join(out)
+
+
+def _pptx_text(raw: bytes) -> str:
+    from pptx import Presentation
+
+    out = []
+    for i, slide in enumerate(Presentation(io.BytesIO(raw)).slides, 1):
+        out.append(f"## Slide {i}")
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape.text_frame.text.strip():
+                out.append(shape.text_frame.text)
+    return "\n".join(out)
 
 
 def _safe_name(name: str) -> str:
@@ -105,9 +145,10 @@ def download_attachment(
 def read_attachment_text(
     message_id: str, filename: str, index: int = 0, max_chars: int = 20000
 ) -> str:
-    """Return the text of a PDF or text attachment without saving it.
+    """Return the text of an attachment without saving it.
 
-    Other types (images, docx, xlsx): use download_attachment, then read the file.
+    Supports PDF, docx, xlsx, pptx, and text files (txt, csv, json, xml, html, md).
+    Other types (images, zip, doc, xls, ppt): use download_attachment, then read the file.
     """
     svc = _service()
     part = _pick(_attachments(svc, message_id), filename, index)
@@ -119,6 +160,12 @@ def read_attachment_text(
         text = "\n\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(raw)).pages)
         if not text.strip():
             return "PDF has no extractable text (scanned?). Use download_attachment and view it."
+    elif mime == DOCX or filename.lower().endswith(".docx"):
+        text = _docx_text(raw)
+    elif mime == XLSX or filename.lower().endswith(".xlsx"):
+        text = _xlsx_text(raw)
+    elif mime == PPTX or filename.lower().endswith(".pptx"):
+        text = _pptx_text(raw)
     elif mime.startswith(TEXT_TYPES):
         text = raw.decode("utf-8", errors="replace")
     else:
