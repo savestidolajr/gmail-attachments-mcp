@@ -6,3 +6,4 @@ token.json
 client_secret*.json
 .env
 .DS_Store
+.vercel

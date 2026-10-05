@@ -91,6 +91,18 @@ Security: anyone with the bearer token can read the attachments in the Gmail acc
 
 Note: claude.ai web custom connectors expect OAuth, not a static bearer token, so this setup targets Claude Code, Claude Desktop and other clients that accept custom headers.
 
+## Host it on Vercel (alternative to Railway)
+
+Same hosted mode, as a Vercel Python function. `api/index.py` exposes the app, `vercel.json` routes everything to it. The MCP session runs per request (stateless, JSON responses), so it does not depend on lifespan events.
+
+1. Do the one-time Google setup and `uv run gmail-attachments-auth` locally.
+2. `npm i -g vercel`, then `vercel login`.
+3. `./scripts/vercel-setup.sh` links the project and sets the four env vars from your local OAuth files, piped straight to Vercel. It prints the generated `MCP_AUTH_TOKEN` once. Save it.
+4. `vercel deploy --prod`
+5. Connect your client to `https://<your-project>.vercel.app/mcp` with header `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+
+Caveats: function time limit applies (set to 60s in `vercel.json`, your plan may cap it lower), cold starts import the Google and Office libraries, and Vercel's deployment protection may block the URL until you disable it for this project. Same security rules as Railway: keep the token secret, scope stays read-only.
+
 ## Env vars
 - `GMAIL_ATT_CONFIG_DIR`: where credentials/token live
 - `GMAIL_ATT_CLIENT_FILE`: path to the OAuth client JSON
