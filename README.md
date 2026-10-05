@@ -64,10 +64,38 @@ claude mcp add gmail-attachments --scope user -- uv run --directory /absolute/pa
 ```
 Restart the client, then ask it to list the attachments on any email.
 
+## Host it on Railway (use from any device)
+
+The local server only works on the machine it runs on. To reach it from other devices, run the hosted mode: the same tools over streamable HTTP, protected by a bearer token.
+
+Differences from local mode: no `download_attachment` (no persistent disk), and credentials come from env vars instead of `token.json`.
+
+1. Do the one-time Google setup and `uv run gmail-attachments-auth` locally first.
+2. Print the three secrets Railway needs (output is secret, do not paste it anywhere public):
+   ```
+   uv run gmail-attachments-export
+   ```
+3. Generate a random access token:
+   ```
+   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+4. In Railway: **New Project, Deploy from GitHub repo**, pick this repo. Railway builds the `Dockerfile`.
+5. Add variables: `GMAIL_ATT_CLIENT_ID`, `GMAIL_ATT_CLIENT_SECRET`, `GMAIL_ATT_REFRESH_TOKEN`, `MCP_AUTH_TOKEN`.
+6. Under **Settings, Networking**, generate a public domain.
+7. Connect your client to `https://<your-domain>/mcp` with header `Authorization: Bearer <MCP_AUTH_TOKEN>`. For Claude Code:
+   ```
+   claude mcp add --transport http gmail-attachments https://<your-domain>/mcp --header "Authorization: Bearer <MCP_AUTH_TOKEN>"
+   ```
+
+Security: anyone with the bearer token can read the attachments in the Gmail account. Keep the token secret, keep the scope read-only, and rotate `MCP_AUTH_TOKEN` if it leaks. Host it for yourself only; do not run it as a shared service holding other people's Gmail tokens. The server refuses to start without a token of 32+ characters. `/health` is the only unauthenticated route.
+
+Note: claude.ai web custom connectors expect OAuth, not a static bearer token, so this setup targets Claude Code, Claude Desktop and other clients that accept custom headers.
+
 ## Env vars
 - `GMAIL_ATT_CONFIG_DIR`: where credentials/token live
 - `GMAIL_ATT_CLIENT_FILE`: path to the OAuth client JSON
 - `GMAIL_ATT_DOWNLOAD_DIR`: default download folder
+- Hosted mode only: `GMAIL_ATT_CLIENT_ID`, `GMAIL_ATT_CLIENT_SECRET`, `GMAIL_ATT_REFRESH_TOKEN`, `MCP_AUTH_TOKEN`, `PORT` (set by Railway)
 
 ## Notes
 - While the OAuth app is in "Testing", Google expires the refresh token after 7 days. Re-run the auth command, or publish the app to "In production" (no verification needed for personal use of a single account).

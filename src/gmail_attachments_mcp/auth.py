@@ -22,7 +22,34 @@ def _save(creds: Credentials) -> None:
     TOKEN_FILE.chmod(0o600)
 
 
+def _env_credentials() -> Credentials | None:
+    """Hosted mode: build credentials from env vars, nothing written to disk."""
+    refresh = os.environ.get("GMAIL_ATT_REFRESH_TOKEN")
+    client_id = os.environ.get("GMAIL_ATT_CLIENT_ID")
+    client_secret = os.environ.get("GMAIL_ATT_CLIENT_SECRET")
+    if not (refresh and client_id and client_secret):
+        return None
+    return Credentials(
+        token=None,
+        refresh_token=refresh,
+        client_id=client_id,
+        client_secret=client_secret,
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=SCOPES,
+    )
+
+
+_env_creds: Credentials | None = None
+
+
 def get_credentials(interactive: bool = False) -> Credentials:
+    global _env_creds
+    if _env_creds is None:
+        _env_creds = _env_credentials()
+    if _env_creds is not None:
+        if not _env_creds.valid:
+            _env_creds.refresh(Request())
+        return _env_creds
     creds = None
     if TOKEN_FILE.exists():
         creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
@@ -51,3 +78,18 @@ def main() -> None:
         print(e, file=sys.stderr)
         sys.exit(1)
     print(f"Authorised. Token saved to {TOKEN_FILE}")
+
+
+def export_env() -> None:
+    """Print the env vars needed to run the hosted server. Output is secret."""
+    import json
+
+    if not TOKEN_FILE.exists() or not CLIENT_FILE.exists():
+        print("Run gmail-attachments-auth first.", file=sys.stderr)
+        sys.exit(1)
+    token = json.loads(TOKEN_FILE.read_text())
+    client = json.loads(CLIENT_FILE.read_text())
+    client = client.get("installed") or client.get("web") or client
+    print(f"GMAIL_ATT_CLIENT_ID={client['client_id']}")
+    print(f"GMAIL_ATT_CLIENT_SECRET={client['client_secret']}")
+    print(f"GMAIL_ATT_REFRESH_TOKEN={token['refresh_token']}")

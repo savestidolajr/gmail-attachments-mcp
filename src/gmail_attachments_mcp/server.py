@@ -19,7 +19,14 @@ DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
-mcp = FastMCP("gmail-attachments")
+REMOTE = os.environ.get("GMAIL_ATT_REMOTE") == "1"
+
+mcp = FastMCP(
+    "gmail-attachments",
+    host="0.0.0.0" if REMOTE else "127.0.0.1",
+    port=int(os.environ.get("PORT", "8000")),
+    stateless_http=True,
+)
 
 
 def _service():
@@ -118,7 +125,6 @@ def list_attachments(message_id: str) -> str:
     )
 
 
-@mcp.tool()
 def download_attachment(
     message_id: str, filename: str, dest_dir: str = "", index: int = 0
 ) -> str:
@@ -141,6 +147,10 @@ def download_attachment(
     return str(target)
 
 
+if not REMOTE:  # hosted server has no persistent disk
+    mcp.tool()(download_attachment)
+
+
 @mcp.tool()
 def read_attachment_text(
     message_id: str, filename: str, index: int = 0, max_chars: int = 20000
@@ -148,7 +158,7 @@ def read_attachment_text(
     """Return the text of an attachment without saving it.
 
     Supports PDF, docx, xlsx, pptx, and text files (txt, csv, json, xml, html, md).
-    Other types (images, zip, doc, xls, ppt): use download_attachment, then read the file.
+    Other types (images, zip, doc, xls, ppt): use download_attachment (local server only).
     """
     svc = _service()
     part = _pick(_attachments(svc, message_id), filename, index)
