@@ -77,6 +77,8 @@ The local server only works on the machine it runs on. Hosted mode runs the same
    claude mcp add --transport http gmail-attachments https://<your-project>.vercel.app/mcp --header "Authorization: Bearer <MCP_AUTH_TOKEN>"
    ```
 
+To rotate the token later and re-register it in Claude Code in one step, with the token never printed: `./scripts/rotate-and-register.sh`.
+
 Caveats: the default function time limit applies to large attachments, cold starts import the Google and Office libraries, and Vercel's deployment protection may block the URL until you disable it for this project. Security: anyone with the bearer token can read attachments in the Gmail account. Keep the token secret, keep the scope read-only, rotate `MCP_AUTH_TOKEN` if it leaks, and host it for yourself only, never as a shared service holding other people's Gmail tokens. Without a token of 32+ characters the server rejects every request. `/health` is the only unauthenticated route.
 
 ## Env vars
