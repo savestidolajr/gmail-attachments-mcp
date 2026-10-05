@@ -1,5 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
-  "functions": { "api/index.py": { "maxDuration": 60 } }
+  "services": {
+    "mcp": { "root": ".", "entrypoint": "app:app" }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": { "service": "mcp" } }]
 }

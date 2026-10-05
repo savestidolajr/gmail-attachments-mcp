@@ -93,7 +93,7 @@ Note: claude.ai web custom connectors expect OAuth, not a static bearer token, s
 
 ## Host it on Vercel (alternative to Railway)
 
-Same hosted mode, as a Vercel Python function. `api/index.py` exposes the app, `vercel.json` routes everything to it. The MCP session runs per request (stateless, JSON responses), so it does not depend on lifespan events.
+Same hosted mode, as a Vercel Python service. `app.py` exposes the ASGI app, `vercel.json` declares it as a service and routes everything to it. The MCP session runs per request (stateless, JSON responses), so it does not depend on lifespan events.
 
 1. Do the one-time Google setup and `uv run gmail-attachments-auth` locally.
 2. `npm i -g vercel`, then `vercel login`.
@@ -101,7 +101,7 @@ Same hosted mode, as a Vercel Python function. `api/index.py` exposes the app, `
 4. `vercel deploy --prod`
 5. Connect your client to `https://<your-project>.vercel.app/mcp` with header `Authorization: Bearer <MCP_AUTH_TOKEN>`.
 
-Caveats: function time limit applies (set to 60s in `vercel.json`, your plan may cap it lower), cold starts import the Google and Office libraries, and Vercel's deployment protection may block the URL until you disable it for this project. Same security rules as Railway: keep the token secret, scope stays read-only.
+Caveats: the default function time limit applies to large attachments, cold starts import the Google and Office libraries, and Vercel's deployment protection may block the URL until you disable it for this project. Same security rules as Railway: keep the token secret, scope stays read-only.
 
 ## Env vars
 - `GMAIL_ATT_CONFIG_DIR`: where credentials/token live
