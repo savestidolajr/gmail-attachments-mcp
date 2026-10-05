@@ -1,6 +1,19 @@
 # gmail-attachments-mcp
 
-Local MCP server that fills the gap in the hosted Gmail connector: it can't download attachments. This one can. Read-only (`gmail.readonly`).
+**Give your AI agent the ability to open Gmail attachments.**
+
+Most Gmail integrations let an agent search and read email bodies but stop at the attachment. This MCP server fills that gap. Your agent can list what is attached to a message, read PDFs, Word, Excel and PowerPoint files straight into its context, or save any attachment to disk. Read-only (`gmail.readonly`), runs locally on your machine.
+
+Works with any MCP client: Claude Code, Claude Desktop, Cursor, and others.
+
+## What your agent can do with it
+- "Summarise the PDF the recruiter sent me."
+- "Read the invoice attached to that Anthropic email and check the totals match the email body."
+- "Pull the job description from the latest email and compare it to my CV."
+- "Download the spreadsheet from Sam's email and total column C."
+- "List every attachment in that thread."
+
+Pair it with a Gmail connector: the connector finds the message and gives the `message_id`, this server opens the attachments.
 
 ## Tools
 - `list_attachments(message_id)`: name, type, size
@@ -26,11 +39,30 @@ Local MCP server that fills the gap in the hosted Gmail connector: it can't down
    ```
    Token is saved to `~/.config/gmail-attachments-mcp/token.json` (mode 600).
 
-## Register with Claude Code
+## Install in your agent
+
+Clone the repo first (needs [uv](https://docs.astral.sh/uv/)):
 ```
 git clone https://github.com/savestidolajr/gmail-attachments-mcp
+```
+
+**Claude Code**
+```
 claude mcp add gmail-attachments --scope user -- uv run --directory /absolute/path/to/gmail-attachments-mcp gmail-attachments-mcp
 ```
+
+**Claude Desktop, Cursor and other MCP clients**: add this to the client's MCP config (`claude_desktop_config.json` for Claude Desktop):
+```json
+{
+  "mcpServers": {
+    "gmail-attachments": {
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/gmail-attachments-mcp", "gmail-attachments-mcp"]
+    }
+  }
+}
+```
+Restart the client, then ask it to list the attachments on any email.
 
 ## Env vars
 - `GMAIL_ATT_CONFIG_DIR`: where credentials/token live
