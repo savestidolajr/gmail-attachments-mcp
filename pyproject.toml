@@ -17,7 +17,6 @@ dependencies = [
 gmail-attachments-mcp = "gmail_attachments_mcp.server:main"
 gmail-attachments-auth = "gmail_attachments_mcp.auth:main"
 gmail-attachments-export = "gmail_attachments_mcp.auth:export_env"
-gmail-attachments-remote = "gmail_attachments_mcp.remote:main"
 
 [build-system]
 requires = ["hatchling"]

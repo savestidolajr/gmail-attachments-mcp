@@ -64,50 +64,26 @@ claude mcp add gmail-attachments --scope user -- uv run --directory /absolute/pa
 ```
 Restart the client, then ask it to list the attachments on any email.
 
-## Host it on Railway (use from any device)
+## Host it on Vercel (use from any device)
 
-The local server only works on the machine it runs on. To reach it from other devices, run the hosted mode: the same tools over streamable HTTP, protected by a bearer token.
-
-Differences from local mode: no `download_attachment` (no persistent disk), and credentials come from env vars instead of `token.json`.
-
-1. Do the one-time Google setup and `uv run gmail-attachments-auth` locally first.
-2. Print the three secrets Railway needs (output is secret, do not paste it anywhere public):
-   ```
-   uv run gmail-attachments-export
-   ```
-3. Generate a random access token:
-   ```
-   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-   ```
-4. In Railway: **New Project, Deploy from GitHub repo**, pick this repo. Railway builds the `Dockerfile`.
-5. Add variables: `GMAIL_ATT_CLIENT_ID`, `GMAIL_ATT_CLIENT_SECRET`, `GMAIL_ATT_REFRESH_TOKEN`, `MCP_AUTH_TOKEN`.
-6. Under **Settings, Networking**, generate a public domain.
-7. Connect your client to `https://<your-domain>/mcp` with header `Authorization: Bearer <MCP_AUTH_TOKEN>`. For Claude Code:
-   ```
-   claude mcp add --transport http gmail-attachments https://<your-domain>/mcp --header "Authorization: Bearer <MCP_AUTH_TOKEN>"
-   ```
-
-Security: anyone with the bearer token can read the attachments in the Gmail account. Keep the token secret, keep the scope read-only, and rotate `MCP_AUTH_TOKEN` if it leaks. Host it for yourself only; do not run it as a shared service holding other people's Gmail tokens. The server refuses to start without a token of 32+ characters. `/health` is the only unauthenticated route.
-
-Note: claude.ai web custom connectors expect OAuth, not a static bearer token, so this setup targets Claude Code, Claude Desktop and other clients that accept custom headers.
-
-## Host it on Vercel (alternative to Railway)
-
-Same hosted mode, as a Vercel Python service. `app.py` exposes the ASGI app, `vercel.json` declares it as a service and routes everything to it. The MCP session runs per request (stateless, JSON responses), so it does not depend on lifespan events.
+The local server only works on the machine it runs on. Hosted mode runs the same tools over streamable HTTP, protected by a bearer token, as a Vercel Python service. It has no `download_attachment` (no persistent disk) and takes credentials from env vars instead of `token.json`. `app.py` exposes the ASGI app, `vercel.json` declares it as a service and routes everything to it. The MCP session runs per request (stateless, JSON responses), so it does not depend on lifespan events.
 
 1. Do the one-time Google setup and `uv run gmail-attachments-auth` locally.
 2. `npm i -g vercel`, then `vercel login`.
 3. `./scripts/vercel-setup.sh` links the project and sets the four env vars from your local OAuth files, piped straight to Vercel. It prints the generated `MCP_AUTH_TOKEN` once. Save it.
 4. `vercel deploy --prod`
-5. Connect your client to `https://<your-project>.vercel.app/mcp` with header `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+5. Connect your client to `https://<your-project>.vercel.app/mcp`. For Claude Code:
+   ```
+   claude mcp add --transport http gmail-attachments https://<your-project>.vercel.app/mcp --header "Authorization: Bearer <MCP_AUTH_TOKEN>"
+   ```
 
-Caveats: the default function time limit applies to large attachments, cold starts import the Google and Office libraries, and Vercel's deployment protection may block the URL until you disable it for this project. Same security rules as Railway: keep the token secret, scope stays read-only.
+Caveats: the default function time limit applies to large attachments, cold starts import the Google and Office libraries, and Vercel's deployment protection may block the URL until you disable it for this project. Security: anyone with the bearer token can read attachments in the Gmail account. Keep the token secret, keep the scope read-only, rotate `MCP_AUTH_TOKEN` if it leaks, and host it for yourself only, never as a shared service holding other people's Gmail tokens. Without a token of 32+ characters the server rejects every request. `/health` is the only unauthenticated route.
 
 ## Env vars
 - `GMAIL_ATT_CONFIG_DIR`: where credentials/token live
 - `GMAIL_ATT_CLIENT_FILE`: path to the OAuth client JSON
 - `GMAIL_ATT_DOWNLOAD_DIR`: default download folder
-- Hosted mode only: `GMAIL_ATT_CLIENT_ID`, `GMAIL_ATT_CLIENT_SECRET`, `GMAIL_ATT_REFRESH_TOKEN`, `MCP_AUTH_TOKEN`, `PORT` (set by Railway)
+- Hosted mode only: `GMAIL_ATT_CLIENT_ID`, `GMAIL_ATT_CLIENT_SECRET`, `GMAIL_ATT_REFRESH_TOKEN`, `MCP_AUTH_TOKEN` (set by `scripts/vercel-setup.sh`)
 
 ## Notes
 - While the OAuth app is in "Testing", Google expires the refresh token after 7 days. Re-run the auth command, or publish the app to "In production" (no verification needed for personal use of a single account).
