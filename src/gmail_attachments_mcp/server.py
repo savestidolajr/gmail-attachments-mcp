@@ -150,6 +150,23 @@ def download_attachment(
 if not REMOTE:  # hosted server has no persistent disk
     mcp.tool()(download_attachment)
 
+MAX_B64_BYTES = int(os.environ.get("GMAIL_ATT_MAX_B64_BYTES", 1_500_000))
+
+
+@mcp.tool()
+def get_attachment_base64(message_id: str, filename: str, index: int = 0) -> str:
+    """Return an attachment's raw bytes as standard base64, for the caller to write to disk.
+
+    Use when the server has no disk (hosted mode). Refuses files over ~1.5 MB
+    (MCP result size limits); use the local server's download_attachment for those.
+    """
+    svc = _service()
+    part = _pick(_attachments(svc, message_id), filename, index)
+    size = part["body"].get("size", 0)
+    if size > MAX_B64_BYTES:
+        raise ValueError(f"{filename!r} is {size} bytes; limit is {MAX_B64_BYTES}")
+    return base64.b64encode(_bytes(svc, message_id, part)).decode("ascii")
+
 
 @mcp.tool()
 def read_attachment_text(

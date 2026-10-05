@@ -18,6 +18,7 @@ Pair it with a Gmail connector: the connector finds the message and gives the `m
 ## Tools
 - `list_attachments(message_id)`: name, type, size
 - `download_attachment(message_id, filename, dest_dir="", index=0)`: saves to `~/Downloads/gmail-attachments` by default, never overwrites
+- `get_attachment_base64(message_id, filename, index=0)`: returns raw file bytes as base64 so a client can write them to disk (works on the hosted server; refuses files over ~1.5 MB)
 - `read_attachment_text(message_id, filename, index=0, max_chars=20000)`: extracts text without saving the file. Supported types:
   - PDF (text-based; scanned PDFs return a hint to download instead)
   - Word `.docx` (paragraphs and tables)
@@ -76,6 +77,22 @@ The local server only works on the machine it runs on. Hosted mode runs the same
    ```
    claude mcp add --transport http gmail-attachments https://<your-project>.vercel.app/mcp --header "Authorization: Bearer <MCP_AUTH_TOKEN>"
    ```
+
+### Which clients can connect to the hosted server
+
+The hosted server only accepts `Authorization: Bearer <MCP_AUTH_TOKEN>`, so the client must be able to send a custom header.
+
+| Client | Works? |
+|---|---|
+| Claude Code (any machine) | Yes, using `--header` as above |
+| Claude Desktop, Cursor, other config-file clients | Likely, if they support HTTP MCP servers with headers (otherwise bridge with `mcp-remote`) |
+| Claude.ai web and mobile (custom connectors) | No. Connectors accept no auth or OAuth only, with no field for a bearer header |
+
+To add it on another machine, run the `claude mcp add --transport http ...` command above with the same token.
+
+The server reads one Gmail account: whoever owns the refresh token in its env vars. Connecting a different Claude account gives access to the same mailbox, not the connecting account's own mail. To serve other people, each needs their own deployment.
+
+Making it work on Claude web and mobile would need either a secret in the URL path (simple, but the secret shows up in URLs and logs) or a full OAuth flow on the server. Neither is implemented.
 
 To rotate the token later and re-register it in Claude Code in one step, with the token never printed: `./scripts/rotate-and-register.sh`.
 
