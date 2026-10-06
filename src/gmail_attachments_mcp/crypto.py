@@ -62,12 +62,19 @@ def verify_state(state: str) -> dict | None:
     except ValueError:
         return None
     expected = hmac.new(_state_key(), body.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(sig, expected):
+    try:
+        if not hmac.compare_digest(sig.encode("utf-8"), expected.encode()):
+            return None
+    except (TypeError, UnicodeEncodeError):
         return None
     try:
         payload = json.loads(_b64d(body))
     except Exception:
         return None
-    if payload.get("exp", 0) < time.time():
+    if not isinstance(payload, dict):
+        return None
+    if not isinstance(payload.get("exp"), (int, float)):
+        return None
+    if payload["exp"] < time.time():
         return None
     return payload
