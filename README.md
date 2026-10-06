@@ -134,19 +134,14 @@ Setup (once). Set all env vars **before** you deploy: with `DATABASE_URL` set bu
    ```
    Rotating or losing this key disconnects every user on their next call (their stored token can no longer be decrypted), and they must reconnect. There is no dual-key support.
    Optional: `MCP_ALLOWED_REDIRECT_URIS` (see "Redirect URI allowlist" below). `PUBLIC_BASE_URL` must exactly equal the host Claude connects to.
-4. **Create tables and add people.** `vercel env pull` cannot read sensitive variables (it writes the literal `[SENSITIVE]`), and the Neon `DATABASE_URL` is sensitive, so do this in the Neon SQL editor (Neon dashboard, your project, SQL Editor):
-   1. Copy the schema to the clipboard, paste it into the editor and run it. It is safe to run twice:
-      ```
-      uv run python -c "from gmail_attachments_mcp.store import SCHEMA; print(SCHEMA)" | pbcopy
-      ```
-   2. Allow people to sign in (addresses lowercase, exactly as Google reports them):
-      ```sql
-      INSERT INTO allowlist (email, added_at) VALUES
-        ('you@gmail.com', extract(epoch from now())),
-        ('friend@gmail.com', extract(epoch from now()))
-      ON CONFLICT DO NOTHING;
-      ```
-   Alternative from a terminal: copy the connection string from the Neon dashboard (Connect), then run `read -s DATABASE_URL && export DATABASE_URL` (paste, Enter), and `uv run gmail-attachments-initdb` / `uv run gmail-attachments-allow friend@gmail.com`. Close the terminal tab afterwards.
+4. **Create tables and add people.** `vercel env pull` cannot read sensitive variables (it writes the literal `[SENSITIVE]`), and the Neon `DATABASE_URL` is sensitive. Copy the connection string from the Neon dashboard (Connect), then in a terminal:
+   ```
+   read -s DATABASE_URL && export DATABASE_URL      # paste, press Enter (nothing is echoed)
+   uv run gmail-attachments-initdb
+   uv run gmail-attachments-allow you@gmail.com friend@gmail.com
+   unset DATABASE_URL
+   ```
+   Addresses are stored lowercase and must match what Google reports. Do not use the Neon SQL editor for the schema: it runs each paste as one prepared statement and rejects the multi-statement script. It is fine for single statements such as the allowlist insert or the offboarding SQL below.
 5. In Vercel, turn **Deployment Protection off** for the production domain. In multi-user mode Claude web cannot reach `/.well-known/...`, `/register` or `/mcp` otherwise.
 6. `vercel deploy --prod`. Then add `https://<your-project>.vercel.app/mcp` as a custom connector in Claude.
 
