@@ -80,7 +80,7 @@ The local server only works on the machine it runs on. Hosted mode runs the same
 
 ### Which clients can connect to the hosted server
 
-The hosted server only accepts `Authorization: Bearer <MCP_AUTH_TOKEN>`, so the client must be able to send a custom header.
+In single-token mode the server accepts `Authorization: Bearer <MCP_AUTH_TOKEN>`, so the client must be able to send that custom header. In multi-user mode (below) clients sign in with OAuth instead and do not need to send a custom header.
 
 | Client | Works? |
 |---|---|
@@ -94,7 +94,7 @@ In single-user mode the server reads one Gmail account: whoever owns the refresh
 
 To rotate the token later and re-register it in Claude Code in one step, with the token never printed: `./scripts/rotate-and-register.sh`.
 
-Caveats: the default function time limit applies to large attachments, cold starts import the Google and Office libraries, and Vercel's deployment protection may block the URL until you disable it for this project. Security: anyone with the bearer token can read attachments in the Gmail account. Keep the token secret, keep the scope read-only, rotate `MCP_AUTH_TOKEN` if it leaks, and host it for yourself only, never as a shared service holding other people's Gmail tokens. Without a token of 32+ characters the server rejects every request. `/health` is the only unauthenticated route.
+Caveats: the default function time limit applies to large attachments, cold starts import the Google and Office libraries, and Vercel's deployment protection may block the URL until you disable it for this project. Security (single static-token setup): anyone with the bearer token can read attachments in the Gmail account. Keep the token secret, keep the scope read-only, rotate `MCP_AUTH_TOKEN` if it leaks, and do not hand that token to other people. To share with others, use "Multi-user hosted mode (allowlist)" below, with its stated limits. In multi-user mode, OAuth-issued access tokens are also accepted on `/mcp`. Without a token of 32+ characters the server rejects every request. `/health` is the only unauthenticated route.
 
 ## Multi-user hosted mode (allowlist)
 
@@ -109,13 +109,13 @@ Limits to know about:
 - Making this public for anyone needs Google restricted-scope verification and an annual third-party security assessment. Not done.
 
 Offboarding someone:
-- Removing an email from the allowlist only blocks new sign-ins. To cut off someone who is already connected, disconnect them too. Run this in the Neon SQL editor or psql, replacing `friend@gmail.com`:
+- Removing an email from the allowlist only blocks new sign-ins. To cut off someone who is already connected, disconnect them too. Run this in the Neon SQL editor or psql, replacing `friend@gmail.com` (addresses are stored lowercase):
   ```sql
   UPDATE mcp_tokens SET revoked_at = extract(epoch from now())
-    WHERE user_id = (SELECT id FROM users WHERE email = 'friend@gmail.com') AND revoked_at IS NULL;
+    WHERE user_id = (SELECT id FROM users WHERE email = lower('friend@gmail.com')) AND revoked_at IS NULL;
   UPDATE users SET google_refresh_token_enc = NULL, revoked_at = extract(epoch from now())
-    WHERE email = 'friend@gmail.com';
-  DELETE FROM allowlist WHERE email = 'friend@gmail.com';
+    WHERE email = lower('friend@gmail.com');
+  DELETE FROM allowlist WHERE email = lower('friend@gmail.com');
   ```
 - They can also remove the app at myaccount.google.com/permissions to revoke Google's side.
 
