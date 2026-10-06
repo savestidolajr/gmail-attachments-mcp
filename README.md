@@ -69,6 +69,8 @@ Restart the client, then ask it to list the attachments on any email.
 
 The local server only works on the machine it runs on. Hosted mode runs the same tools over streamable HTTP, protected by a bearer token, as a Vercel Python service. It has no `download_attachment` (no persistent disk) and takes credentials from env vars instead of `token.json`. `app.py` exposes the ASGI app, `vercel.json` declares it as a service and routes everything to it. The MCP session runs per request (stateless, JSON responses), so it does not depend on lifespan events.
 
+If `DATABASE_URL` is not set, the server runs in **owner-only mode**: the static `MCP_AUTH_TOKEN` is the only credential, there are no OAuth routes (they return 404), and everything below works as written. Setting `DATABASE_URL` switches on multi-user mode (next section), which then requires four more variables.
+
 1. Do the one-time Google setup and `uv run gmail-attachments-auth` locally.
 2. `npm i -g vercel`, then `vercel login`.
 3. `./scripts/vercel-setup.sh` links the project and sets the four env vars from your local OAuth files, piped straight to Vercel. It prints the generated `MCP_AUTH_TOKEN` once. Save it.
@@ -104,36 +106,67 @@ How it works: the MCP SDK provides the OAuth endpoints; the server stores each u
 
 Limits to know about:
 - While your Google OAuth app is in "Testing", Google expires each user's refresh token after 7 days. They get a "reconnect" error, then sign in again. Up to 100 test users.
-- You hold access to every approved user's mail. Only approve people you trust, keep the database and `TOKEN_ENC_KEY` safe, and tell users they can disconnect any time (revoking the connector wipes their stored token).
-- Public MCP clients that cannot send a client secret may be unable to call the `/revoke` endpoint, so disconnecting is most reliable through the operator SQL below or by removing the app in Google permissions.
+- You hold access to every approved user's mail. Only approve people you trust and keep the database and `TOKEN_ENC_KEY` safe.
+- The reliable way for a user to disconnect is to remove the app at myaccount.google.com/permissions. Their next tool call then fails to refresh, the server wipes the stored token, and the client has to sign in again. `/revoke` also disconnects, but some public clients cannot call it.
 - Making this public for anyone needs Google restricted-scope verification and an annual third-party security assessment. Not done.
 
 Offboarding someone:
-- Removing an email from the allowlist only blocks new sign-ins. To cut off someone who is already connected, disconnect them too. Run this in the Neon SQL editor or psql, replacing `friend@gmail.com` (addresses are stored lowercase):
+- Removing an email from the allowlist only blocks new sign-ins. To cut off someone who is already connected, disconnect them too. Run this in the Neon SQL editor or psql (the allowlist delete comes first so they cannot sign back in mid-way), replacing `friend@gmail.com` (addresses are stored lowercase):
   ```sql
+  BEGIN;
+  DELETE FROM allowlist WHERE email = lower('friend@gmail.com');
   UPDATE mcp_tokens SET revoked_at = extract(epoch from now())
     WHERE user_id = (SELECT id FROM users WHERE email = lower('friend@gmail.com')) AND revoked_at IS NULL;
   UPDATE users SET google_refresh_token_enc = NULL, revoked_at = extract(epoch from now())
     WHERE email = lower('friend@gmail.com');
-  DELETE FROM allowlist WHERE email = lower('friend@gmail.com');
+  COMMIT;
   ```
+- The address must match exactly what Google reports for that account (dots included) and is stored lowercase. Check `SELECT email FROM users;` if unsure.
 - They can also remove the app at myaccount.google.com/permissions to revoke Google's side.
 
-Setup (once):
+Setup (once). Set all env vars **before** you deploy: with `DATABASE_URL` set but the others missing, every route except `/health` returns 500 listing what is missing. Also check whether the Vercel project auto-deploys from Git before you merge this branch to main, so it does not go live half-configured.
+
 1. **Postgres:** Vercel dashboard, Storage, create a Neon database and connect it to the project. This adds `DATABASE_URL`.
 2. **Google OAuth client:** in Google Cloud, create an OAuth client of type **Web application** with redirect URI `https://<your-project>.vercel.app/google/callback`. Keep the consent screen on Testing and add each user's Gmail as a test user.
 3. **Env vars** (Vercel, production): `PUBLIC_BASE_URL` (`https://<your-project>.vercel.app`, no trailing slash), `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_WEB_CLIENT_SECRET`, `TOKEN_ENC_KEY`. Generate the key without printing it:
    ```
    python3 -c "import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())" | vercel env add TOKEN_ENC_KEY production
    ```
-   Losing this key means every user has to reconnect.
+   Rotating or losing this key disconnects every user on their next call (their stored token can no longer be decrypted), and they must reconnect. There is no dual-key support.
+   Optional: `MCP_ALLOWED_REDIRECT_URIS` (see "Redirect URI allowlist" below). `PUBLIC_BASE_URL` must exactly equal the host Claude connects to.
 4. **Create tables and add people:**
    ```
-   vercel env pull .env.local
+   vercel env pull --environment=production .env.local
    uv run --env-file .env.local gmail-attachments-initdb
    uv run --env-file .env.local gmail-attachments-allow friend@gmail.com
+   rm .env.local
    ```
-5. `vercel deploy --prod`. Then add `https://<your-project>.vercel.app/mcp` as a custom connector in Claude.
+   Delete `.env.local` afterwards: it holds the database password and your other secrets.
+5. In Vercel, turn **Deployment Protection off** for the production domain. In multi-user mode Claude web cannot reach `/.well-known/...`, `/register` or `/mcp` otherwise.
+6. `vercel deploy --prod`. Then add `https://<your-project>.vercel.app/mcp` as a custom connector in Claude.
+
+### Redirect URI allowlist
+
+Client registration is open, so the server only accepts clients whose redirect URIs are on an allowlist (otherwise anyone could register a callback they control and phish an approved user through the real Google consent screen). Allowed: `https://claude.ai/api/mcp/auth_callback`, `https://claude.com/api/mcp/auth_callback`, loopback `http://localhost`, `http://127.0.0.1` and `http://[::1]` on any port and path (CLI and desktop clients), and any URI listed exactly in `MCP_ALLOWED_REDIRECT_URIS` (comma-separated). If a client's registration is rejected with `invalid_redirect_uri`, add its callback URL to that variable and redeploy.
+
+### First connect checklist
+- Deployment Protection is off for the production domain.
+- `PUBLIC_BASE_URL` equals the connector host exactly.
+- Add the connector in Claude web (`https://<your-project>.vercel.app/mcp`).
+- Sign in with a Google account that is on the allowlist (and a test user on the consent screen).
+- Run a tool call, such as `list_attachments`.
+- Expect the "reconnect" flow after 7 days while the Google app is in Testing mode.
+
+### Housekeeping
+Expired tokens and old audit rows are not purged automatically. Run this occasionally in the Neon SQL editor (timestamps are epoch seconds). The Neon free tier has a small storage limit, so keep `audit_log` trimmed; change `90` days to the retention you want:
+```sql
+DELETE FROM mcp_tokens
+  WHERE (expires_at < extract(epoch from now()) - 86400)
+     OR (revoked_at IS NOT NULL AND revoked_at < extract(epoch from now()) - 86400);
+DELETE FROM auth_codes
+  WHERE used_at IS NOT NULL OR expires_at < extract(epoch from now());
+DELETE FROM audit_log WHERE ts < extract(epoch from now()) - 90 * 86400;
+```
 
 Run the tests with `uv run pytest`. To include the Postgres tests, start a throwaway database and set `TEST_DATABASE_URL`:
 ```
@@ -146,7 +179,7 @@ TEST_DATABASE_URL=postgresql://postgres:test@localhost:54329/postgres uv run pyt
 - `GMAIL_ATT_CLIENT_FILE`: path to the OAuth client JSON
 - `GMAIL_ATT_DOWNLOAD_DIR`: default download folder
 - Hosted mode only: `GMAIL_ATT_CLIENT_ID`, `GMAIL_ATT_CLIENT_SECRET`, `GMAIL_ATT_REFRESH_TOKEN`, `MCP_AUTH_TOKEN` (set by `scripts/vercel-setup.sh`)
-- Multi-user mode: `DATABASE_URL`, `TOKEN_ENC_KEY`, `PUBLIC_BASE_URL`, `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_WEB_CLIENT_SECRET`, optional `GMAIL_ATT_RATE_LIMIT` (calls per user per minute, default 60)
+- Multi-user mode (switched on by setting `DATABASE_URL`; the other four are then required): `DATABASE_URL`, `TOKEN_ENC_KEY`, `PUBLIC_BASE_URL`, `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_WEB_CLIENT_SECRET`; optional `MCP_ALLOWED_REDIRECT_URIS` (extra exact OAuth redirect URIs, comma-separated), `GMAIL_ATT_RATE_LIMIT` (calls per user per minute, default 60)
 
 ## Notes
 - While the OAuth app is in "Testing", Google expires the refresh token after 7 days. Re-run the auth command, or publish the app to "In production" (no verification needed for personal use of a single account).
