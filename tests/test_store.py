@@ -56,6 +56,8 @@ def test_allowlist_is_case_insensitive(store):
 
 def test_upsert_user_is_stable_and_clears_revocation(store):
     uid = store.upsert_user("A@example.com", "enc1")
+    store.disconnect_user(uid)
+    assert store.get_user(uid)["revoked_at"] is not None
     assert store.upsert_user("a@example.com", "enc2") == uid
     user = store.get_user(uid)
     assert user["email"] == "a@example.com"
@@ -77,6 +79,18 @@ def test_disconnect_user_wipes_token_and_revokes_all_tokens(store):
     assert store.get_token("t-access", "access") is None
     assert store.get_token("t-refresh", "refresh") is None
     assert store.get_token("t-other", "access") is not None
+
+
+def test_disconnect_user_invalidates_unused_auth_codes(store):
+    uid = store.upsert_user("a@example.com", "enc")
+    other = store.upsert_user("b@example.com", "encb")
+    _code(store, uid, "h-a")
+    _code(store, other, "h-b")
+    store.disconnect_user(uid)
+    assert store.get_auth_code("h-a") is None
+    assert store.consume_auth_code("h-a") is False
+    assert store.get_auth_code("h-b") is not None
+    assert store.consume_auth_code("h-b") is True
 
 
 def test_client_round_trip(store):

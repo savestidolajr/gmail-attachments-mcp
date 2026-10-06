@@ -121,6 +121,10 @@ class PgStore:
                 "UPDATE mcp_tokens SET revoked_at = %s WHERE user_id = %s AND revoked_at IS NULL",
                 (now, user_id),
             )
+            conn.execute(
+                "UPDATE auth_codes SET used_at = %s WHERE user_id = %s AND used_at IS NULL",
+                (now, user_id),
+            )
 
     def save_client(self, client_id, info_json):
         self._run(
@@ -234,6 +238,9 @@ class MemoryStore:
         for token in self.tokens.values():
             if token["user_id"] == user_id and token["revoked_at"] is None:
                 token["revoked_at"] = now
+        for code in self.codes.values():
+            if code["user_id"] == user_id and code["used_at"] is None:
+                code["used_at"] = now
 
     def save_client(self, client_id, info_json):
         self.clients[client_id] = info_json
