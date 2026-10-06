@@ -90,3 +90,63 @@ def test_audited_skips_the_owner_and_never_touches_the_database(monkeypatch):
         return "ok"
 
     assert fake("m1") == "ok"
+
+
+class _BrokenLogStore(MemoryStore):
+    def log_call(self, *args, **kwargs):
+        raise RuntimeError("db down")
+
+
+def test_audit_failure_does_not_change_the_outcome():
+    set_store(_BrokenLogStore())
+
+    @server.audited
+    def good(message_id: str):
+        return "ok"
+
+    @server.audited
+    def bad(message_id: str):
+        raise ValueError("nope")
+
+    token = _as("u1")
+    try:
+        assert good("m1") == "ok"
+        with pytest.raises(ValueError):
+            bad("m1")
+    finally:
+        current_user.reset(token)
+        set_store(None)
+
+
+def test_rate_limit_env_is_sanitised(monkeypatch):
+    monkeypatch.setenv("GMAIL_ATT_RATE_LIMIT", "garbage")
+    assert server._rate_limit() == 60
+    monkeypatch.setenv("GMAIL_ATT_RATE_LIMIT", "0")
+    assert server._rate_limit() == 1
+    monkeypatch.setenv("GMAIL_ATT_RATE_LIMIT", "-5")
+    assert server._rate_limit() == 1
+    monkeypatch.setenv("GMAIL_ATT_RATE_LIMIT", "5")
+    assert server._rate_limit() == 5
+
+
+class _ExplodingStore(MemoryStore):
+    def count_calls(self, *args, **kwargs):
+        raise AssertionError("store touched")
+
+    def log_call(self, *args, **kwargs):
+        raise AssertionError("store touched")
+
+
+def test_audited_skips_explicit_owner():
+    set_store(_ExplodingStore())
+
+    @server.audited
+    def fake(message_id: str):
+        return "ok"
+
+    token = _as(OWNER)
+    try:
+        assert fake("m1") == "ok"
+    finally:
+        current_user.reset(token)
+        set_store(None)

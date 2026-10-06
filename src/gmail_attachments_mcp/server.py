@@ -2,6 +2,7 @@
 import base64
 import functools
 import io
+import logging
 import os
 import re
 from pathlib import Path
@@ -12,6 +13,8 @@ from mcp.server.fastmcp import FastMCP
 from .identity import OWNER, current_user
 from .store import get_store
 from .users import credentials_for
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DEST = Path(
     os.environ.get("GMAIL_ATT_DOWNLOAD_DIR", Path.home() / "Downloads" / "gmail-attachments")
@@ -40,6 +43,13 @@ def _service():
     return _gmail_client(current_user.get() or OWNER)
 
 
+def _rate_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("GMAIL_ATT_RATE_LIMIT", "60")))
+    except ValueError:
+        return 60
+
+
 def audited(fn):
     """Rate-limit and audit-log tool calls made by hosted users. The owner (static token or
     local mode) is exempt, so local mode never needs a database."""
@@ -50,7 +60,7 @@ def audited(fn):
         if user_id is None or user_id == OWNER:
             return fn(*args, **kwargs)
         store = get_store()
-        limit = int(os.environ.get("GMAIL_ATT_RATE_LIMIT", "60"))
+        limit = _rate_limit()
         if store.count_calls(user_id, 60) >= limit:
             raise RuntimeError("Rate limit: too many calls in the last minute. Wait a moment and retry.")
         message_id = kwargs.get("message_id") or (args[0] if args else None)
@@ -60,7 +70,10 @@ def audited(fn):
             ok = True
             return result
         finally:
-            store.log_call(user_id, fn.__name__, message_id, ok)
+            try:
+                store.log_call(user_id, fn.__name__, message_id, ok)
+            except Exception:
+                logger.exception("audit log write failed")
 
     return wrapper
 
