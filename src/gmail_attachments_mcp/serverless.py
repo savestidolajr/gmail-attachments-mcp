@@ -36,6 +36,59 @@ def _is_owner_token(token: str) -> bool:
     return len(static) >= 32 and bool(token) and hmac.compare_digest(token.encode(), static.encode())
 
 
+def _make_mcp_handler(resolve_user, unauthorized):
+    """The /mcp leg shared by both modes: resolve the caller, then run a per-request stateless
+    manager with `current_user` set (and reset)."""
+
+    async def handle_mcp(scope, receive, send):
+        token = _bearer(scope)
+        user_id = await resolve_user(token)
+        if not user_id:  # None or "": never run a tool without a real identity
+            await unauthorized(bool(token))(scope, receive, send)
+            return
+        marker = current_user.set(user_id)
+        try:
+            manager = StreamableHTTPSessionManager(app=mcp._mcp_server, stateless=True, json_response=True)
+            async with manager.run():
+                await manager.handle_request(scope, receive, send)
+        finally:
+            current_user.reset(marker)
+
+    return handle_mcp
+
+
+def _dispatcher(handle_mcp, fallback):
+    async def asgi(scope, receive, send):
+        if scope["type"] != "http":
+            return
+        path = scope["path"]
+        if path == "/health":
+            await PlainTextResponse("ok")(scope, receive, send)
+        elif path.rstrip("/") == "/mcp":
+            await handle_mcp(scope, receive, send)
+        else:
+            await fallback(scope, receive, send)
+
+    return asgi
+
+
+def build_owner_app():
+    """Owner-only mode (no DATABASE_URL): the static MCP_AUTH_TOKEN is the only credential
+    and there are no OAuth routes."""
+
+    async def resolve_user(token: str):
+        return OWNER if _is_owner_token(token) else None
+
+    def unauthorized(had_token: bool) -> JSONResponse:
+        return JSONResponse({"error": "unauthorized"}, status_code=401,
+                            headers={"WWW-Authenticate": "Bearer"})
+
+    async def not_found(scope, receive, send):
+        await JSONResponse({"error": "not found"}, status_code=404)(scope, receive, send)
+
+    return _dispatcher(_make_mcp_handler(resolve_user, unauthorized), not_found)
+
+
 def build_app(store, google, settings: Settings):
     provider = GmailOAuthProvider(store, google, settings)
     oauth_app = Starlette(routes=build_routes(provider, settings))
@@ -56,32 +109,7 @@ def build_app(store, google, settings: Settings):
         access = await provider.load_access_token(token)
         return access.subject if access else None
 
-    async def handle_mcp(scope, receive, send):
-        token = _bearer(scope)
-        user_id = await resolve_user(token)
-        if user_id is None:
-            await unauthorized(bool(token))(scope, receive, send)
-            return
-        marker = current_user.set(user_id)
-        try:
-            manager = StreamableHTTPSessionManager(app=mcp._mcp_server, stateless=True, json_response=True)
-            async with manager.run():
-                await manager.handle_request(scope, receive, send)
-        finally:
-            current_user.reset(marker)
-
-    async def asgi(scope, receive, send):
-        if scope["type"] != "http":
-            return
-        path = scope["path"]
-        if path == "/health":
-            await PlainTextResponse("ok")(scope, receive, send)
-        elif path.rstrip("/") == "/mcp":
-            await handle_mcp(scope, receive, send)
-        else:
-            await oauth_app(scope, receive, send)
-
-    return asgi
+    return _dispatcher(_make_mcp_handler(resolve_user, unauthorized), oauth_app)
 
 
 _app = None
@@ -94,12 +122,15 @@ async def app(scope, receive, send):
     if scope["path"] == "/health":
         await PlainTextResponse("ok")(scope, receive, send)
         return
-    missing = [v for v in REQUIRED if not os.environ.get(v)]
-    if missing:
-        await JSONResponse({"error": f"server misconfigured: {', '.join(missing)} not set"},
-                           status_code=500)(scope, receive, send)
-        return
     if _app is None:
-        settings = Settings.from_env()
-        _app = build_app(get_store(), GoogleLogin(settings), settings)
+        if not os.environ.get("DATABASE_URL"):
+            _app = build_owner_app()  # single-user hosted deployment: static token only
+        else:
+            missing = [v for v in REQUIRED if not os.environ.get(v)]
+            if missing:
+                await JSONResponse({"error": f"server misconfigured: {', '.join(missing)} not set"},
+                                   status_code=500)(scope, receive, send)
+                return
+            settings = Settings.from_env()
+            _app = build_app(get_store(), GoogleLogin(settings), settings)
     await _app(scope, receive, send)

@@ -6,7 +6,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from mcp.server.auth.provider import (
@@ -14,6 +14,7 @@ from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizationParams,
     RefreshToken,
+    RegistrationError,
     TokenError,
     construct_redirect_uri,
 )
@@ -38,6 +39,27 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+
+
+FIXED_REDIRECT_URIS = frozenset({
+    "https://claude.ai/api/mcp/auth_callback",
+    "https://claude.com/api/mcp/auth_callback",
+})
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def redirect_uri_allowed(uri: str) -> bool:
+    """Registration is open, so only callbacks we trust may be registered: the Claude
+    callbacks, loopback http (native/CLI clients), and operator-listed exact URIs."""
+    extra = {u.strip() for u in os.environ.get("MCP_ALLOWED_REDIRECT_URIS", "").split(",") if u.strip()}
+    if uri in FIXED_REDIRECT_URIS or uri in extra:
+        return True
+    try:
+        parts = urlsplit(uri)
+        return (parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTS
+                and parts.username is None and parts.password is None)
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -118,6 +140,11 @@ class GmailOAuthProvider:
         return OAuthClientInformationFull.model_validate_json(raw) if raw else None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        for uri in client_info.redirect_uris or []:
+            if not redirect_uri_allowed(str(uri)):
+                raise RegistrationError(
+                    "invalid_redirect_uri", "redirect_uri is not allowed for this server"
+                )
         await _t(self.store.save_client, client_info.client_id, client_info.model_dump_json())
 
     async def authorize(self, client, params: AuthorizationParams) -> str:

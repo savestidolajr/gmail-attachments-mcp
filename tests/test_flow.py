@@ -205,3 +205,14 @@ def test_static_owner_token_still_works(env, monkeypatch):
 def test_short_static_token_is_disabled(env, monkeypatch):
     monkeypatch.setenv("MCP_AUTH_TOKEN", "short")
     assert call(env, "short", "list_attachments", message_id="m1").status_code == 401
+
+
+def test_register_rejects_disallowed_redirect_uri_over_http(env):
+    resp = env.http.post("/register", json={
+        "redirect_uris": ["https://evil.example/cb"], "client_name": "evil",
+        "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"],
+    })
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "invalid_redirect_uri"
+    assert env.store.clients == {}

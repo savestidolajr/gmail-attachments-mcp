@@ -199,3 +199,59 @@ def test_revoke_still_wipes_when_stored_token_is_undecryptable(env):
     asyncio.run(env.provider.revoke_token(access))
     assert env.google.revoked == []
     _assert_disconnected(env, auth_code.subject, tokens)
+
+
+# --- redirect URI allowlist (open dynamic registration must not accept arbitrary callbacks)
+from mcp.server.auth.provider import RegistrationError  # noqa: E402
+
+
+def _register(env, *uris):
+    client = OAuthClientInformationFull(
+        client_id="reg", redirect_uris=list(uris), token_endpoint_auth_method="none"
+    )
+    asyncio.run(env.provider.register_client(client))
+
+
+@pytest.mark.parametrize("uri", [
+    "https://claude.ai/api/mcp/auth_callback",
+    "https://claude.com/api/mcp/auth_callback",
+    "http://localhost/cb",
+    "http://localhost:8080/some/path",
+    "http://127.0.0.1:33418/callback",
+    "http://[::1]:5000/cb",
+])
+def test_allowed_redirect_uris_register(env, uri):
+    _register(env, uri)
+    assert env.store.get_client("reg") is not None
+
+
+@pytest.mark.parametrize("uri", [
+    "https://evil.example/cb",
+    "https://claude.ai/api/mcp/auth_callback/",
+    "https://claude.ai/api/mcp/auth_callback?x=1",
+    "http://claude.ai/api/mcp/auth_callback",
+    "http://localhost.evil.example/cb",
+    "http://localhost@evil.example/cb",
+    "https://localhost/cb",
+    "http://127.0.0.1.evil.example/",
+    "http://evil.example/cb",
+    "javascript:alert(1)",
+])
+def test_bad_redirect_uris_rejected(env, uri):
+    with pytest.raises(RegistrationError) as exc:
+        _register(env, uri)
+    assert exc.value.error == "invalid_redirect_uri"
+    assert env.store.get_client("reg") is None
+
+
+def test_one_bad_uri_rejects_the_whole_registration(env):
+    with pytest.raises(RegistrationError):
+        _register(env, "http://localhost/cb", "https://evil.example/cb")
+    assert env.store.get_client("reg") is None
+
+
+def test_env_allowlist_adds_exact_entries(env, monkeypatch):
+    monkeypatch.setenv("MCP_ALLOWED_REDIRECT_URIS", " https://app.example/cb , ,https://other.example/cb")
+    _register(env, "https://app.example/cb")
+    with pytest.raises(RegistrationError):
+        _register(env, "https://app.example/cb/extra")
