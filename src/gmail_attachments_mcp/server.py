@@ -1,5 +1,6 @@
 """MCP server: list, download and read Gmail attachments. Read-only."""
 import base64
+import functools
 import io
 import os
 import re
@@ -8,7 +9,9 @@ from pathlib import Path
 from googleapiclient.discovery import build
 from mcp.server.fastmcp import FastMCP
 
-from .auth import get_credentials
+from .identity import OWNER, current_user
+from .store import get_store
+from .users import credentials_for
 
 DEFAULT_DEST = Path(
     os.environ.get("GMAIL_ATT_DOWNLOAD_DIR", Path.home() / "Downloads" / "gmail-attachments")
@@ -29,8 +32,37 @@ mcp = FastMCP(
 )
 
 
+def _gmail_client(user_id: str):
+    return build("gmail", "v1", credentials=credentials_for(user_id), cache_discovery=False)
+
+
 def _service():
-    return build("gmail", "v1", credentials=get_credentials(), cache_discovery=False)
+    return _gmail_client(current_user.get() or OWNER)
+
+
+def audited(fn):
+    """Rate-limit and audit-log tool calls made by hosted users. The owner (static token or
+    local mode) is exempt, so local mode never needs a database."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        user_id = current_user.get()
+        if user_id is None or user_id == OWNER:
+            return fn(*args, **kwargs)
+        store = get_store()
+        limit = int(os.environ.get("GMAIL_ATT_RATE_LIMIT", "60"))
+        if store.count_calls(user_id, 60) >= limit:
+            raise RuntimeError("Rate limit: too many calls in the last minute. Wait a moment and retry.")
+        message_id = kwargs.get("message_id") or (args[0] if args else None)
+        ok = False
+        try:
+            result = fn(*args, **kwargs)
+            ok = True
+            return result
+        finally:
+            store.log_call(user_id, fn.__name__, message_id, ok)
+
+    return wrapper
 
 
 def _walk(part: dict):
@@ -111,6 +143,7 @@ def _safe_name(name: str) -> str:
 
 
 @mcp.tool()
+@audited
 def list_attachments(message_id: str) -> str:
     """List attachments on a Gmail message (name, type, size in bytes).
 
@@ -148,12 +181,13 @@ def download_attachment(
 
 
 if not REMOTE:  # hosted server has no persistent disk
-    mcp.tool()(download_attachment)
+    mcp.tool()(audited(download_attachment))
 
 MAX_B64_BYTES = int(os.environ.get("GMAIL_ATT_MAX_B64_BYTES", 1_500_000))
 
 
 @mcp.tool()
+@audited
 def get_attachment_base64(message_id: str, filename: str, index: int = 0) -> str:
     """Return an attachment's raw bytes as standard base64, for the caller to write to disk.
 
@@ -169,6 +203,7 @@ def get_attachment_base64(message_id: str, filename: str, index: int = 0) -> str
 
 
 @mcp.tool()
+@audited
 def read_attachment_text(
     message_id: str, filename: str, index: int = 0, max_chars: int = 20000
 ) -> str:
