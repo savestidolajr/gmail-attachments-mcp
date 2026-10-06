@@ -8,7 +8,7 @@ from mcp.shared.auth import OAuthClientInformationFull
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from gmail_attachments_mcp.crypto import decrypt, hash_token, sign_state, verify_state
+from gmail_attachments_mcp.crypto import decrypt, encrypt, hash_token, sign_state, verify_state
 from gmail_attachments_mcp.oauth import GmailOAuthProvider, GoogleLogin, Settings, build_routes
 from gmail_attachments_mcp.store import MemoryStore
 
@@ -172,3 +172,30 @@ def test_revoke_disconnects_the_user_and_google(env):
     assert env.store.get_user(auth_code.subject)["refresh_token_enc"] is None
     assert asyncio.run(env.provider.load_access_token(tokens.access_token)) is None
     assert asyncio.run(env.provider.load_refresh_token(env.client, tokens.refresh_token)) is None
+
+
+def _assert_disconnected(env, uid, tokens):
+    assert env.store.get_user(uid)["refresh_token_enc"] is None
+    assert asyncio.run(env.provider.load_access_token(tokens.access_token)) is None
+    assert asyncio.run(env.provider.load_refresh_token(env.client, tokens.refresh_token)) is None
+
+
+def test_revoke_still_wipes_when_google_revoke_fails(env):
+    _, auth_code, tokens = exchange(env)
+    access = asyncio.run(env.provider.load_access_token(tokens.access_token))
+
+    def boom(refresh_token):
+        raise RuntimeError("boom")
+
+    env.google.revoke = boom
+    asyncio.run(env.provider.revoke_token(access))
+    _assert_disconnected(env, auth_code.subject, tokens)
+
+
+def test_revoke_still_wipes_when_stored_token_is_undecryptable(env):
+    _, auth_code, tokens = exchange(env)
+    access = asyncio.run(env.provider.load_access_token(tokens.access_token))
+    env.store.users[auth_code.subject]["refresh_token_enc"] = encrypt("x", "other@example.com")
+    asyncio.run(env.provider.revoke_token(access))
+    assert env.google.revoked == []
+    _assert_disconnected(env, auth_code.subject, tokens)

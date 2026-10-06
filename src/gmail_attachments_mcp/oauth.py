@@ -2,6 +2,7 @@
 handlers (register, authorize, token, revoke, metadata); this module supplies the provider
 behind them, Google sign-in, and the /google/callback leg."""
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.routing import Route
 
 from .crypto import decrypt, encrypt, hash_token, new_token, sign_state, verify_state
+
+logger = logging.getLogger(__name__)
 
 MCP_SCOPE = "gmail.readonly"
 GOOGLE_SCOPES = "openid email https://www.googleapis.com/auth/gmail.readonly"
@@ -187,10 +190,15 @@ class GmailOAuthProvider:
 
     async def disconnect(self, user_id: str) -> None:
         user = await _t(self.store.get_user, user_id)
-        if user and user["refresh_token_enc"]:
-            refresh = decrypt(user["refresh_token_enc"], user["email"])
-            await _t(self.google.revoke, refresh)
-        await _t(self.store.disconnect_user, user_id)
+        try:
+            if user and user["refresh_token_enc"]:
+                refresh = decrypt(user["refresh_token_enc"], user["email"])
+                await _t(self.google.revoke, refresh)
+        except Exception:
+            logger.exception("google revoke failed")
+        finally:
+            # The local wipe must happen in every case.
+            await _t(self.store.disconnect_user, user_id)
 
     async def _issue(self, user_id, client_id, scopes, resource) -> OAuthToken:
         access, refresh, now = new_token(), new_token(), time.time()
