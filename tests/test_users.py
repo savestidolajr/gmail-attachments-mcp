@@ -1,5 +1,6 @@
 import pytest
-from google.auth.exceptions import RefreshError
+from cryptography.exceptions import InvalidTag
+from google.auth.exceptions import RefreshError, TransportError
 
 from gmail_attachments_mcp import users
 from gmail_attachments_mcp.crypto import encrypt
@@ -50,3 +51,24 @@ def test_owner_uses_the_existing_env_credentials(monkeypatch):
     sentinel = object()
     monkeypatch.setattr(users, "get_credentials", lambda: sentinel)
     assert users.credentials_for(OWNER) is sentinel
+
+
+def test_undecryptable_token_disconnects_the_user(store):
+    # Store a user whose token was encrypted under a different context (different email)
+    uid = store.upsert_user("a@example.com", encrypt("rt", "someone-else@example.com"))
+    with pytest.raises(NotConnected, match="Reconnect"):
+        users.credentials_for(uid)
+    assert store.get_user(uid)["refresh_token_enc"] is None
+
+
+def test_transient_refresh_failure_does_not_disconnect(store, monkeypatch):
+    def boom(creds):
+        raise TransportError("network down")
+
+    monkeypatch.setattr(users, "_refresh", boom)
+    uid = store.upsert_user("a@example.com", encrypt("rt", "a@example.com"))
+    original_token = store.get_user(uid)["refresh_token_enc"]
+    with pytest.raises(TransportError):
+        users.credentials_for(uid)
+    # User should remain connected (token not cleared)
+    assert store.get_user(uid)["refresh_token_enc"] == original_token

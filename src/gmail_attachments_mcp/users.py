@@ -1,6 +1,7 @@
 """Google credentials for a given user."""
 import os
 
+from cryptography.exceptions import InvalidTag
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -26,9 +27,14 @@ def credentials_for(user_id: str) -> Credentials:
     user = store.get_user(user_id)
     if not user or user["revoked_at"] is not None or not user["refresh_token_enc"]:
         raise NotConnected(RECONNECT)
+    try:
+        refresh_token = decrypt(user["refresh_token_enc"], user["email"])
+    except InvalidTag:
+        store.disconnect_user(user_id)
+        raise NotConnected(RECONNECT) from None
     creds = Credentials(
         token=None,
-        refresh_token=decrypt(user["refresh_token_enc"], user["email"]),
+        refresh_token=refresh_token,
         client_id=os.environ["GOOGLE_WEB_CLIENT_ID"],
         client_secret=os.environ["GOOGLE_WEB_CLIENT_SECRET"],
         token_uri="https://oauth2.googleapis.com/token",
@@ -38,5 +44,5 @@ def credentials_for(user_id: str) -> Credentials:
         _refresh(creds)
     except RefreshError:
         store.disconnect_user(user_id)  # next /mcp call gets 401 and the client re-runs sign-in
-        raise NotConnected(RECONNECT)
+        raise NotConnected(RECONNECT) from None
     return creds
