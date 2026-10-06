@@ -1,7 +1,7 @@
 [project]
 name = "gmail-attachments-mcp"
 version = "0.1.0"
-description = "Local MCP server: list and download Gmail attachments (read-only)"
+description = "MCP server: list and read Gmail attachments (read-only). Local, or hosted multi-user."
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.9.0,<2",
@@ -11,12 +11,20 @@ dependencies = [
     "python-docx>=1.2.0",
     "openpyxl>=3.1.5",
     "python-pptx>=1.0.2",
+    "psycopg[binary]>=3.2",
+    "cryptography>=42",
+    "httpx>=0.27",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8"]
 
 [project.scripts]
 gmail-attachments-mcp = "gmail_attachments_mcp.server:main"
 gmail-attachments-auth = "gmail_attachments_mcp.auth:main"
 gmail-attachments-export = "gmail_attachments_mcp.auth:export_env"
+gmail-attachments-initdb = "gmail_attachments_mcp.admin:initdb"
+gmail-attachments-allow = "gmail_attachments_mcp.admin:allow"
 
 [build-system]
 requires = ["hatchling"]
@@ -24,3 +32,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gmail_attachments_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
