@@ -92,7 +92,7 @@ In single-token mode the server accepts `Authorization: Bearer <MCP_AUTH_TOKEN>`
 
 To add it on another machine, run the `claude mcp add --transport http ...` command above with the same token.
 
-In single-user mode the server reads one Gmail account: whoever owns the refresh token in its env vars. In multi-user mode (below) each person signs in with their own Google account and only ever sees their own mail.
+In owner-only mode the server reads one Gmail account: whoever owns the refresh token in its env vars. In multi-user mode (below) each person signs in with their own Google account and only ever sees their own mail.
 
 To rotate the token later and re-register it in Claude Code in one step, with the token never printed: `./scripts/rotate-and-register.sh`.
 
@@ -134,7 +134,13 @@ Setup (once). Set all env vars **before** you deploy: with `DATABASE_URL` set bu
    ```
    Rotating or losing this key disconnects every user on their next call (their stored token can no longer be decrypted), and they must reconnect. There is no dual-key support.
    Optional: `MCP_ALLOWED_REDIRECT_URIS` (see "Redirect URI allowlist" below). `PUBLIC_BASE_URL` must exactly equal the host Claude connects to.
-4. **Create tables and add people.** `vercel env pull` cannot read sensitive variables (it writes the literal `[SENSITIVE]`), and the Neon `DATABASE_URL` is sensitive. Copy the connection string from the Neon dashboard (Connect), then in a terminal:
+   Load the Google client ID and secret straight from the JSON you downloaded (no copy and paste, nothing printed), then delete or move that file:
+   ```
+   F=~/Downloads/client_secret_XXXX.json   # must start with {"web": ...}, not "installed"
+   python3 -c "import json,sys;sys.stdout.write(json.load(open(sys.argv[1]))['web']['client_id'])" "$F" | vercel env add GOOGLE_WEB_CLIENT_ID production --sensitive
+   python3 -c "import json,sys;sys.stdout.write(json.load(open(sys.argv[1]))['web']['client_secret'])" "$F" | vercel env add GOOGLE_WEB_CLIENT_SECRET production --sensitive
+   ```
+4. **Create tables and add people.** `vercel env pull` cannot read sensitive variables (it writes the literal `[SENSITIVE]`), and the Neon `DATABASE_URL` is sensitive. Copy the connection string from the Neon dashboard (Connect), then in a real terminal tab (not a tool that runs each command in a fresh shell, or the variable is gone before the next line):
    ```
    read -s DATABASE_URL && export DATABASE_URL      # paste, press Enter (nothing is echoed)
    uv run gmail-attachments-initdb
@@ -148,6 +154,16 @@ Setup (once). Set all env vars **before** you deploy: with `DATABASE_URL` set bu
 ### Redirect URI allowlist
 
 Client registration is open, so the server only accepts clients whose redirect URIs are on an allowlist (otherwise anyone could register a callback they control and phish an approved user through the real Google consent screen). Allowed: `https://claude.ai/api/mcp/auth_callback`, `https://claude.com/api/mcp/auth_callback`, loopback `http://localhost`, `http://127.0.0.1` and `http://[::1]` on any port and path (CLI and desktop clients), and any URI listed exactly in `MCP_ALLOWED_REDIRECT_URIS` (comma-separated). If a client's registration is rejected with `invalid_redirect_uri`, add its callback URL to that variable and redeploy.
+
+### Verify after deploying
+```
+curl -s https://<your-project>.vercel.app/health                                   # ok
+curl -s https://<your-project>.vercel.app/.well-known/oauth-authorization-server   # JSON, not a Vercel login page
+curl -si -X POST https://<your-project>.vercel.app/mcp -H 'Content-Type: application/json' -d '{}' | grep -i www-authenticate   # points at the protected-resource metadata
+curl -s -X POST https://<your-project>.vercel.app/register -H 'Content-Type: application/json' \
+  -d '{"redirect_uris":["https://evil.example/cb"],"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"]}'   # 400 invalid_redirect_uri
+```
+Your owner connector (static `MCP_AUTH_TOKEN`) keeps working after the deploy. If the project is not linked to GitHub, pushing does not deploy; run `vercel deploy --prod` from the repo folder (`vercel rollback` undoes it).
 
 ### First connect checklist
 - Deployment Protection is off for the production domain.
