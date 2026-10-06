@@ -40,7 +40,8 @@ def _gmail_client(user_id: str):
 
 
 def _service():
-    return _gmail_client(current_user.get() or OWNER)
+    user = current_user.get()
+    return _gmail_client(OWNER if user is None else user)
 
 
 def _rate_limit() -> int:

@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import time
 
 import pytest
 from starlette.testclient import TestClient
@@ -216,3 +217,38 @@ def test_register_rejects_disallowed_redirect_uri_over_http(env):
     assert resp.status_code == 400
     assert resp.json()["error"] == "invalid_redirect_uri"
     assert env.store.clients == {}
+
+
+def _save_access(env, token, user_id="u1", expires_in=3600, client_id="c1"):
+    env.store.save_token(
+        hash_token(token), user_id=user_id, client_id=client_id, kind="access",
+        scopes=["gmail.readonly"], resource=None, expires_at=time.time() + expires_in,
+    )
+
+
+def test_expired_access_token_is_401(env):
+    _save_access(env, "tok-expired", expires_in=-10)
+    assert call(env, "tok-expired", "list_attachments", message_id="m1").status_code == 401
+
+
+def test_non_bearer_scheme_is_401(env):
+    _save_access(env, "tok-ok")
+    resp = env.http.post("/mcp", headers={**MCP_HEADERS, "Authorization": "Basic tok-ok"}, json={})
+    assert resp.status_code == 401
+
+
+def test_empty_user_id_token_is_401(env):
+    _save_access(env, "tok-empty", user_id="")
+    assert call(env, "tok-empty", "list_attachments", message_id="m1").status_code == 401
+
+
+def test_service_does_not_turn_empty_user_into_owner(monkeypatch):
+    seen = []
+    monkeypatch.setattr(server, "_gmail_client", lambda uid: seen.append(uid) or object())
+    marker = current_user.set("")
+    try:
+        server._service()
+    finally:
+        current_user.reset(marker)
+    server._service()  # no user at all: local/owner mode
+    assert seen == ["", "owner"]

@@ -255,3 +255,41 @@ def test_env_allowlist_adds_exact_entries(env, monkeypatch):
     _register(env, "https://app.example/cb")
     with pytest.raises(RegistrationError):
         _register(env, "https://app.example/cb/extra")
+
+
+def test_google_exchange_failure_logs_class_only(env, caplog):
+    class BoomError(Exception):
+        pass
+
+    def boom(code):
+        raise BoomError("failed for code g1 token ya29.secret")
+
+    env.google.exchange_code = boom
+    env.store.add_allowed("a@example.com")
+    with caplog.at_level("DEBUG", logger="gmail_attachments_mcp.oauth"):
+        resp = finish(env)
+    assert resp.status_code == 502
+    assert env.store.users == {} and env.store.tokens == {} and env.store.codes == {}
+    text = "\n".join(r.getMessage() + (str(r.exc_info) if r.exc_info else "") for r in caplog.records)
+    assert "BoomError" in text
+    for secret in ("g1", "ya29", "secret", "a@example.com"):
+        assert secret not in text
+
+
+def test_google_http_error_logs_status_and_error_field_only(env, caplog):
+    import httpx
+
+    def boom(code):
+        req = httpx.Request("POST", "https://oauth2.googleapis.com/token")
+        raise httpx.HTTPStatusError(
+            "bad", request=req,
+            response=httpx.Response(400, request=req, json={"error": "invalid_grant",
+                                                           "error_description": "code g1 is bad"}),
+        )
+
+    env.google.exchange_code = boom
+    with caplog.at_level("DEBUG", logger="gmail_attachments_mcp.oauth"):
+        assert finish(env).status_code == 502
+    text = "\n".join(r.getMessage() + (str(r.exc_info) if r.exc_info else "") for r in caplog.records)
+    assert "HTTPStatusError" in text and "400" in text and "invalid_grant" in text
+    assert "g1" not in text and "is bad" not in text

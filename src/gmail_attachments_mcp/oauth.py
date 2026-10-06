@@ -281,7 +281,18 @@ def build_routes(provider: GmailOAuthProvider, settings: Settings) -> list[Route
         try:
             tokens = await _t(provider.google.exchange_code, code)
             email, verified = await _t(provider.google.email_for, tokens["access_token"])
-        except Exception:
+        except Exception as exc:
+            # Class name and Google's status/error code only: never the body, tokens, code, email.
+            detail = ""
+            if isinstance(exc, httpx.HTTPStatusError):
+                detail = f" status={exc.response.status_code}"
+                try:
+                    err = exc.response.json().get("error")
+                    if isinstance(err, str):
+                        detail += f" error={err[:64]}"
+                except Exception:
+                    pass
+            logger.error("google sign-in exchange failed: %s%s", type(exc).__name__, detail)
             return _page("Could not complete sign-in with Google. Try again in a moment.", 502)
         email = email.lower()
         if not verified or not await _t(provider.store.is_allowed, email):

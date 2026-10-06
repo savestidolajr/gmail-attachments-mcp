@@ -15,6 +15,11 @@ def store(request):
     dsn = os.environ.get("TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("set TEST_DATABASE_URL to run the Postgres contract tests")
+    if dsn == os.environ.get("DATABASE_URL") or "neon.tech" in dsn:
+        pytest.fail(
+            "TEST_DATABASE_URL points at the production database (same as DATABASE_URL or a "
+            "neon.tech host); these tests TRUNCATE every table. Use a throwaway Postgres."
+        )
     s = PgStore(dsn)
     s.init_schema()
     s._run(f"TRUNCATE {TABLES} CASCADE")
