@@ -128,20 +128,25 @@ Setup (once). Set all env vars **before** you deploy: with `DATABASE_URL` set bu
 
 1. **Postgres:** Vercel dashboard, Storage, create a Neon database and connect it to the project. This adds `DATABASE_URL`.
 2. **Google OAuth client:** in Google Cloud, create an OAuth client of type **Web application** with redirect URI `https://<your-project>.vercel.app/google/callback`. Keep the consent screen on Testing and add each user's Gmail as a test user.
-3. **Env vars** (Vercel, production): `PUBLIC_BASE_URL` (`https://<your-project>.vercel.app`, no trailing slash), `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_WEB_CLIENT_SECRET`, `TOKEN_ENC_KEY`. Generate the key without printing it:
+3. **Env vars** (Vercel, production): `PUBLIC_BASE_URL` (`https://<your-project>.vercel.app`, no trailing slash; add it with `--no-sensitive`, Vercel does not allow `PUBLIC*` variables to be sensitive), `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_WEB_CLIENT_SECRET`, `TOKEN_ENC_KEY`. Generate the key without printing it:
    ```
    python3 -c "import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())" | vercel env add TOKEN_ENC_KEY production
    ```
    Rotating or losing this key disconnects every user on their next call (their stored token can no longer be decrypted), and they must reconnect. There is no dual-key support.
    Optional: `MCP_ALLOWED_REDIRECT_URIS` (see "Redirect URI allowlist" below). `PUBLIC_BASE_URL` must exactly equal the host Claude connects to.
-4. **Create tables and add people:**
-   ```
-   vercel env pull --environment=production .env.local
-   uv run --env-file .env.local gmail-attachments-initdb
-   uv run --env-file .env.local gmail-attachments-allow friend@gmail.com
-   rm .env.local
-   ```
-   Delete `.env.local` afterwards: it holds the database password and your other secrets.
+4. **Create tables and add people.** `vercel env pull` cannot read sensitive variables (it writes the literal `[SENSITIVE]`), and the Neon `DATABASE_URL` is sensitive, so do this in the Neon SQL editor (Neon dashboard, your project, SQL Editor):
+   1. Copy the schema to the clipboard, paste it into the editor and run it. It is safe to run twice:
+      ```
+      uv run python -c "from gmail_attachments_mcp.store import SCHEMA; print(SCHEMA)" | pbcopy
+      ```
+   2. Allow people to sign in (addresses lowercase, exactly as Google reports them):
+      ```sql
+      INSERT INTO allowlist (email, added_at) VALUES
+        ('you@gmail.com', extract(epoch from now())),
+        ('friend@gmail.com', extract(epoch from now()))
+      ON CONFLICT DO NOTHING;
+      ```
+   Alternative from a terminal: copy the connection string from the Neon dashboard (Connect), then run `read -s DATABASE_URL && export DATABASE_URL` (paste, Enter), and `uv run gmail-attachments-initdb` / `uv run gmail-attachments-allow friend@gmail.com`. Close the terminal tab afterwards.
 5. In Vercel, turn **Deployment Protection off** for the production domain. In multi-user mode Claude web cannot reach `/.well-known/...`, `/register` or `/mcp` otherwise.
 6. `vercel deploy --prod`. Then add `https://<your-project>.vercel.app/mcp` as a custom connector in Claude.
 
