@@ -22,3 +22,14 @@ def test_allow_without_emails_exits_with_usage(monkeypatch, capsys):
         admin.allow()
     assert exc.value.code == 2
     assert "usage" in capsys.readouterr().err.lower()
+
+
+@pytest.mark.parametrize("command,argv", [("initdb", ["initdb"]), ("allow", ["allow", "a@example.com"])])
+def test_admin_commands_explain_a_missing_database_url(monkeypatch, capsys, command, argv):
+    set_store(None)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit) as exc:
+        getattr(admin, command)()
+    assert exc.value.code == 2
+    assert "DATABASE_URL is not set" in capsys.readouterr().err

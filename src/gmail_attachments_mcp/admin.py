@@ -4,8 +4,20 @@ import sys
 from .store import get_store
 
 
+def _store():
+    try:
+        return get_store()
+    except KeyError:
+        print(
+            "DATABASE_URL is not set. Export the Neon connection string in this shell first "
+            "(see the README, multi-user setup step 4).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def initdb() -> None:
-    get_store().init_schema()
+    _store().init_schema()
     print("Schema ready.")
 
 
@@ -14,7 +26,7 @@ def allow() -> None:
     if not emails:
         print("usage: gmail-attachments-allow EMAIL [EMAIL ...]", file=sys.stderr)
         sys.exit(2)
-    store = get_store()
+    store = _store()
     for email in emails:
         store.add_allowed(email)
     print(f"Allowlisted {len(emails)} address(es).")
